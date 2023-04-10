@@ -24,7 +24,7 @@ def ratio_test(kp_des, ratio=0.7):
             for m,n in matches_ij:
                 if m.distance < 0.7 * n.distance:
                     good_matches.append(m)
-            if len(good_matches)>2:
+            if len(good_matches)>5:
                 matches.append((i,j,good_matches))
     return matches
 
@@ -113,7 +113,7 @@ def ransac(kp1, kp2, matches, n_iterations, threshold, aff=True):
             best_transform = transform
             best_inliers = inliers
 
-    return best_transform
+    return best_transform, best_inliers
 
 
 
@@ -133,18 +133,26 @@ def main():
                     if len(img_files)>0:
                         img_files[-1].pop(0)
                     img_files.append([dirpath])
-                img_files[-1].append(cv2.imread(os.path.join(dirpath, filename), cv2.IMREAD_GRAYSCALE))
+                img_files[-1].append(cv2.imread(os.path.join(dirpath, filename)))
 
     img_list = img_files[4]
     filename = txt_files[4]
-
+    grey_list = []
     with open(filename, "r") as f:
         lines = f.readlines()
         transform = np.array([[float(num) for num in line.split()] for line in lines])
     aff = True if filename.split("_")[1] == 'affine' else False
     height = int("".join([char for char in filename.split("_")[-5] if char.isdigit()]))
     width = int("".join([char for char in filename.split("_")[-2] if char.isdigit()]))
-    kp_des = get_kp_and_des(img_list)
+    zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
+    for i in range(len(img_list)):
+        temp = zeros_img.copy()
+        temp[:img_list[i].shape[0], :img_list[i].shape[1]] = img_list[i]
+        if i==0:
+            temp = cv2.warpPerspective(temp, transform, (temp.shape[1], temp.shape[0]), flags=cv2.INTER_LINEAR)
+        img_list[i] = temp
+        grey_list.append(cv2.cvtColor(temp, cv2.COLOR_BGR2GRAY))
+    kp_des = get_kp_and_des(grey_list)
 
     matches = ratio_test(kp_des)
     plot_matches = True
@@ -159,30 +167,32 @@ def main():
                                           flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
             plt.imshow(img_matches), plt.title(f"img{i}&img{j}"), plt.show()
         # Run RANSAC
-        best_transform = ransac(kp1, kp2, good_matches, n_iterations, threshold, aff)
+        best_transform, best_inliers = ransac(kp1, kp2, good_matches, n_iterations, threshold, aff)
+        if best_inliers>3:
+            # Print the best transformation
+            print(best_transform)
 
-        # Print the best transformation
-        print(best_transform)
+            # Load target image
+            target = img1
 
-        # Load target image
-        target = img1
+            # Warp source image onto target image
+            if aff:
+                img2 = np.array(img2, dtype=np.float32)
+                warped = cv2.warpAffine(img2, best_transform, (img2.shape[1], img2.shape[0]), flags=cv2.INTER_LINEAR)
+                warped = np.array(warped, dtype=np.uint8)
+            else:
+                warped = cv2.warpPerspective(img2, best_transform, (img2.shape[1], img2.shape[0]), flags=cv2.INTER_LINEAR)
 
-        # Warp source image onto target image
-        if aff:
-            warped = cv2.warpAffine(img2, best_transform, (target.shape[1], target.shape[0]), flags=cv2.INTER_LINEAR)
-        else:
-            warped = cv2.warpPerspective(img2, best_transform, (target.shape[1], target.shape[0]), flags=cv2.INTER_LINEAR)
-
-        # Display warped image
-        #plt.imshow(warped, cmap="gray"), plt.show()
-        #plt.imshow(target, cmap="gray"), plt.show()
-        # Blend the images together
-        alpha = 1
-        beta = 1
-        blended = cv2.addWeighted(target, alpha, warped, beta, 0)
-        # Paste the transformed image onto the black image
-        #warped_img = cv2.warpPerspective(blended, transform, (height, width))
-        # Display blended image
-        plt.imshow(blended, cmap="gray"), plt.title(f"img{i}&img{j}"), plt.show()
+            # Display warped image
+            plt.imshow(warped), plt.show()
+            plt.imshow(target), plt.show()
+            # Blend the images together
+            alpha = 1
+            beta = 1
+            blended = cv2.addWeighted(target, alpha, warped, beta, 0)
+            # Paste the transformed image onto the black image
+            #warped_img = cv2.warpPerspective(blended, transform, (height, width))
+            # Display blended image
+            plt.imshow(blended), plt.title(f"img{i}&img{j}"), plt.show()
 
 main()
