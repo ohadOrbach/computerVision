@@ -2,6 +2,8 @@ import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from PIL import Image, ImageChops
+
 
 def get_kp_and_des(list_of_images):
     """Compute SIFT keypoints and descriptors for a list of images"""
@@ -45,6 +47,20 @@ def affine_homography_transform(kp1, kp2, matches, aff=True):
         M, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
     return M
+
+
+def Warp_source(aff, img, best_transform):
+    # Warp source image onto target image
+    if aff:
+        img = np.array(img, dtype=np.float32)
+        warped = cv2.warpAffine(img, best_transform, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
+        warped = np.array(warped, dtype=np.uint8)
+    else:
+        warped = cv2.warpPerspective(img, best_transform, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
+
+    return warped
+
+
 
 def apply_transform(points, transform):
     """
@@ -116,14 +132,51 @@ def ransac(kp1, kp2, matches, n_iterations, threshold, aff=True):
     return best_transform, best_inliers
 
 
+def added_image(added_images, height, width, group_index):
+    zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
+    for i, img in enumerate(added_images):
+        if np.count_nonzero(img) and i != 4:
+            for i in range(len(img)):
+                # iterate through columns
+                for j in range(len(img[0])):
+                    if not np.count_nonzero(zeros_img[i][j]):
+                        zeros_img[i][j] = img[i][j]
+    # zeros_img = cv2.warpPerspective(zeros_img, transform, (width, height))
+    plt.imshow(zeros_img), plt.title(f"image group #{group_index}"), plt.show()
+    return zeros_img
 
-def main():
-    main_dir = 'puzzles'
+
+def update_list(img_list, transform, height, width):
+    append_yet = 1
+    k = 0
+    zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
+    grey_list = []
+    for i in range(len(img_list)):
+        temp = zeros_img.copy()
+        temp[:img_list[i].shape[0], :img_list[i].shape[1]] = img_list[i]
+        if not np.count_nonzero(temp):
+            continue
+        if append_yet:
+            temp = cv2.warpPerspective(temp, transform, (temp.shape[1], temp.shape[0]), flags=cv2.INTER_LINEAR)
+            append_yet = 0
+        img_list[k] = temp
+        k += 1
+        grey_list.append(cv2.cvtColor(temp, cv2.COLOR_BGR2GRAY))
+
+    return img_list, grey_list
+
+
+def update_group_list(img_list):
+    grey_list = []
+    for im in img_list:
+        grey_list.append(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY))
+
+    return img_list, grey_list
+
+
+def read_images(main_dir):
     txt_files = []
     img_files = []
-    n_iterations = 1000
-    threshold = 10
-
     for dirpath, dirnames, filenames in os.walk(main_dir):
         for filename in filenames:
             if filename.endswith('.txt'):
@@ -134,65 +187,85 @@ def main():
                         img_files[-1].pop(0)
                     img_files.append([dirpath])
                 img_files[-1].append(cv2.imread(os.path.join(dirpath, filename)))
+    return img_files, txt_files
 
-    img_list = img_files[4]
-    filename = txt_files[4]
-    grey_list = []
+
+def read_transform(filename):
     with open(filename, "r") as f:
         lines = f.readlines()
         transform = np.array([[float(num) for num in line.split()] for line in lines])
     aff = True if filename.split("_")[1] == 'affine' else False
     height = int("".join([char for char in filename.split("_")[-5] if char.isdigit()]))
     width = int("".join([char for char in filename.split("_")[-2] if char.isdigit()]))
+    return transform, aff, height, width
+
+
+def solve_puzzle(img_file, txt_file):
+    n_iterations = 1000
+    threshold = 10
+    img_list = img_file
+    transform, aff, height, width = read_transform(txt_file)
     zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
-    for i in range(len(img_list)):
-        temp = zeros_img.copy()
-        temp[:img_list[i].shape[0], :img_list[i].shape[1]] = img_list[i]
-        if i==0:
-            temp = cv2.warpPerspective(temp, transform, (temp.shape[1], temp.shape[0]), flags=cv2.INTER_LINEAR)
-        img_list[i] = temp
-        grey_list.append(cv2.cvtColor(temp, cv2.COLOR_BGR2GRAY))
+    img_list, grey_list = update_list(img_list, transform, height, width)
+    # run on the new matches base on image_0 relative place
     kp_des = get_kp_and_des(grey_list)
-
     matches = ratio_test(kp_des)
-    plot_matches = True
-    for i, j, good_matches in matches:
-        img1 = img_list[i]
-        img2 = img_list[j]
-        kp1, des1 = kp_des[i]
-        kp2, des2 = kp_des[j]
+    added_image_list = []
 
-        if plot_matches:
-            img_matches = cv2.drawMatches(img1, kp1, img2, kp2, good_matches, None,
-                                          flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-            plt.imshow(img_matches), plt.title(f"img{i}&img{j}"), plt.show()
-        # Run RANSAC
-        best_transform, best_inliers = ransac(kp1, kp2, good_matches, n_iterations, threshold, aff)
-        if best_inliers>3:
-            # Print the best transformation
-            print(best_transform)
+    # find & merge groups of matches and
+    added_images_num = 0
+    img_num = len(grey_list)
+    img_group = 0
+    while added_images_num < img_num:
+        added_images = np.empty(len(img_list), dtype=object)
+        added_images[0] = img_list[0]
+        img_list[0] = zeros_img
+        added_images_num += 1
+        for i, j, good_matches in matches:
+            if i != 0 and j != 0:
+                continue
+            img_j = img_list[j]
+            img_i = img_list[i]
+            kp1, des1 = kp_des[i]
+            kp2, des2 = kp_des[j]
+            best_transform, best_inliers = ransac(kp1, kp2, good_matches, n_iterations, threshold, aff)
+            if best_inliers > 3:
+                if i != 0:
+                    img_list[i] = Warp_source(aff, img_i, best_transform)
+                    added_images[i] = img_list[i]
+                    added_images[i] = zeros_img
+                else:
+                    img_list[j] = Warp_source(aff, img_j, best_transform)
+                    added_images[j] = img_list[j]
+                    img_list[j] = zeros_img
+                added_images_num += 1
 
-            # Load target image
-            target = img1
+        img_group += 1
+        new_image = added_image(added_images, height, width, img_group)
+        added_image_list.append(new_image)
+        img_list, grey_list = update_list(img_list, transform, height, width)
+        kp_des = get_kp_and_des(grey_list)
+        matches = ratio_test(kp_des)
 
-            # Warp source image onto target image
-            if aff:
-                img2 = np.array(img2, dtype=np.float32)
-                warped = cv2.warpAffine(img2, best_transform, (img2.shape[1], img2.shape[0]), flags=cv2.INTER_LINEAR)
-                warped = np.array(warped, dtype=np.uint8)
-            else:
-                warped = cv2.warpPerspective(img2, best_transform, (img2.shape[1], img2.shape[0]), flags=cv2.INTER_LINEAR)
+    # merge the merged groups of matches that we found in the previous step
+    # img_list, grey_list = update_group_list(added_image_list)
+    # kp_des = get_kp_and_des(grey_list)
+    # matches = ratio_test(kp_des)
+    # print(matches)
+    """
+    TODO: 1. merge groups of matches (groups in added_image_list)
+          2. mapped groups into blank pic by intersections
+    """
 
-            # Display warped image
-            plt.imshow(warped), plt.show()
-            plt.imshow(target), plt.show()
-            # Blend the images together
-            alpha = 1
-            beta = 1
-            blended = cv2.addWeighted(target, alpha, warped, beta, 0)
-            # Paste the transformed image onto the black image
-            #warped_img = cv2.warpPerspective(blended, transform, (height, width))
-            # Display blended image
-            plt.imshow(blended), plt.title(f"img{i}&img{j}"), plt.show()
+
+# NOTE: This solution not ready yet.
+def main():
+    # Read images files
+    img_files, txt_files = read_images('puzzles')
+
+    # Solve for each image
+    for i, img_file in enumerate(img_files):
+        solve_puzzle(img_file, txt_files[i])
 
 main()
+
