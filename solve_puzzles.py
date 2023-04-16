@@ -14,21 +14,23 @@ def get_kp_and_des(list_of_images):
         kp_des.append([kp, des])
     return kp_des
 
+
 def ratio_test(kp_des, ratio=0.7):
     bf = cv2.BFMatcher()
     matches = []
     for i in range(len(kp_des)):
-        for j in range(i+1, len(kp_des)):
+        for j in range(i + 1, len(kp_des)):
             # Match the descriptors using the Brute-Force Matcher
             matches_ij = bf.knnMatch(kp_des[i][-1], kp_des[j][-1], k=2)
             # Apply the ratio test to filter out false matches
             good_matches = []
-            for m,n in matches_ij:
+            for m, n in matches_ij:
                 if m.distance < 0.7 * n.distance:
                     good_matches.append(m)
-            if len(good_matches)>5:
-                matches.append((i,j,good_matches))
+            if len(good_matches) > 5:
+                matches.append((i, j, good_matches))
     return matches
+
 
 def affine_homography_transform(kp1, kp2, matches, aff=True):
     """
@@ -56,10 +58,10 @@ def Warp_source(aff, img, best_transform):
         warped = cv2.warpAffine(img, best_transform, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
         warped = np.array(warped, dtype=np.uint8)
     else:
+        img = np.array(img, dtype=np.float32)
         warped = cv2.warpPerspective(img, best_transform, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
-
+        warped = np.array(warped, dtype=np.uint8)
     return warped
-
 
 
 def apply_transform(points, transform):
@@ -86,7 +88,7 @@ def apply_transform(points, transform):
     return points_normalized
 
 
-def calculate_residuals(kp1, kp2,matches, transform):
+def calculate_residuals(kp1, kp2, matches, transform):
     """
     Calculates the residuals of a transformation on a set of point matches.
 
@@ -105,6 +107,7 @@ def calculate_residuals(kp1, kp2,matches, transform):
     residuals = np.sqrt(np.sum((transformed_pts - dst_pts) ** 2, axis=1))
 
     return residuals
+
 
 def ransac(kp1, kp2, matches, n_iterations, threshold, aff=True):
     best_transform = None
@@ -153,7 +156,7 @@ def update_list(img_list, transform, height, width):
     grey_list = []
     for i in range(len(img_list)):
         temp = zeros_img.copy()
-        temp[:img_list[i].shape[0], :img_list[i].shape[1]] = img_list[i]
+        temp[:img_list[i].shape[0],:img_list[i].shape[1]] = img_list[i]
         if not np.count_nonzero(temp):
             continue
         if append_yet:
@@ -162,7 +165,6 @@ def update_list(img_list, transform, height, width):
         img_list[k] = temp
         k += 1
         grey_list.append(cv2.cvtColor(temp, cv2.COLOR_BGR2GRAY))
-
     return img_list, grey_list
 
 
@@ -183,7 +185,7 @@ def read_images(main_dir):
                 txt_files.append(os.path.join(dirpath, filename))
             elif 'pieces' in dirpath and filename.endswith('.jpg'):
                 if not img_files or img_files[-1][0] != dirpath:
-                    if len(img_files)>0:
+                    if len(img_files) > 0:
                         img_files[-1].pop(0)
                     img_files.append([dirpath])
                 img_files[-1].append(cv2.imread(os.path.join(dirpath, filename)))
@@ -199,13 +201,7 @@ def read_transform(filename):
     width = int("".join([char for char in filename.split("_")[-2] if char.isdigit()]))
     return transform, aff, height, width
 
-
-def solve_puzzle(img_file, txt_file):
-    n_iterations = 1000
-    threshold = 10
-    img_list = img_file
-    transform, aff, height, width = read_transform(txt_file)
-    zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
+def loop(n_iterations, threshold, img_list, transform, aff, height, width ,zeros_img):
     img_list, grey_list = update_list(img_list, transform, height, width)
     # run on the new matches base on image_0 relative place
     kp_des = get_kp_and_des(grey_list)
@@ -247,6 +243,22 @@ def solve_puzzle(img_file, txt_file):
         kp_des = get_kp_and_des(grey_list)
         matches = ratio_test(kp_des)
 
+    return added_image_list
+
+def solve_puzzle(img_file, txt_file):
+    n_iterations = 1000
+    threshold = 10
+    img_list = img_file
+    transform, aff, height, width = read_transform(txt_file)
+    height, width = height, width
+    zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
+
+    final_list = loop(n_iterations, threshold, img_list, transform, aff, height, width, zeros_img)
+    while len(final_list) > 1:
+        final_list = loop(n_iterations, threshold, final_list, np.eye(3, 3), aff, height, width, zeros_img)
+
+    return final_list[0]
+
     # merge the merged groups of matches that we found in the previous step
     # img_list, grey_list = update_group_list(added_image_list)
     # kp_des = get_kp_and_des(grey_list)
@@ -264,8 +276,11 @@ def main():
     img_files, txt_files = read_images('puzzles')
 
     # Solve for each image
-    for i, img_file in enumerate(img_files):
-        solve_puzzle(img_file, txt_files[i])
+    #for i, img_file in enumerate(img_files):
+    #    solve_puzzle(img_file, txt_files[i])
+
+    i = 4
+    image = solve_puzzle(img_files[i], txt_files[i])
+    plt.imshow(image), plt.title(f"final #{i}"), plt.show()
 
 main()
-
