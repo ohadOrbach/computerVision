@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 def read_images(main_dir):
     txt_files = []
     img_files = []
-    for dirpath, dirnames, filenames in sorted(os.walk(main_dir)):
+    for dirpath, dirnames, filenames in os.walk(main_dir):
         for filename in filenames:
             if filename.endswith('.txt'):
                 txt_files.append(os.path.join(dirpath, filename))
@@ -188,15 +188,18 @@ for i in range(len(img_files)):
         best_match_idx, best_match_transform = main_loop(grey_list, aff)
         if best_match_idx == None:
             plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
-            print(len(img_list))
-        warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
-        new_list = [paste(img_list[0], warped)]
-        for i in range(len(img_list)):
-            if i!= 0 and i!=best_match_idx:
-                new_list.append(img_list[i])
+            print("error in", i, "puzzle, length of image list is ", len(img_list), "\n")
+            img_list = []
+        else:
+            warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
+            new_list = [paste(img_list[0], warped)]
+            for j in range(len(img_list)):
+                if j!= 0 and j!=best_match_idx:
+                    new_list.append(img_list[j])
 
-        img_list = new_list
-        img_list, grey_list = update_group_list(img_list)
-        #plt.imshow(img_list[0]), plt.show()
+            img_list = new_list
+            img_list, grey_list = update_group_list(img_list)
+            #plt.imshow(img_list[0]), plt.show()
 
-    plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
+    if len(img_list)>0:
+        plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
