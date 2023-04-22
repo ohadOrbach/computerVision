@@ -1,4 +1,5 @@
 import cv2
+import matplotlib
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -7,6 +8,7 @@ import itertools
 number_of_good_matches_low = 4
 number_of_good_matches_high = 15
 n_iterations, threshold = 1000, 10
+
 
 def read_images(main_dir):
     txt_files = []
@@ -33,6 +35,7 @@ def read_transform(filename):
     width = int("".join([char for char in filename.split("_")[-2] if char.isdigit()]))
     return transform, aff, height, width
 
+
 def get_kp_and_des(list_of_images):
     """Compute SIFT keypoints and descriptors for a list of images"""
     sift = cv2.SIFT_create()
@@ -42,13 +45,14 @@ def get_kp_and_des(list_of_images):
         kp_des.append([kp, des])
     return kp_des
 
+
 def ratio_test(kp_des):
     ratio = 0.5
     bf = cv2.BFMatcher()
     kp1, des1 = kp_des[0]
     matches_list = []
     for idx, kp_des2 in enumerate(kp_des):
-        if idx!=0:
+        if idx != 0:
             kp2, des2 = kp_des2
             # Match the descriptors using the Brute-Force Matcher
             matches = bf.knnMatch(des1, des2, k=2)
@@ -61,12 +65,12 @@ def ratio_test(kp_des):
                 for m, n in matches:
                     if m.distance < ratio * n.distance:
                         good_matches.append(m)
-                if len(good_matches) > number_of_good_matches_low and len(good_matches)<number_of_good_matches_high:
+                if len(good_matches) > number_of_good_matches_low and len(good_matches) < number_of_good_matches_high:
                     matches_list.append((idx, good_matches))
                     ratio = 0.5
                     cont = False
                 elif len(good_matches) > number_of_good_matches_low:
-                    ratio=ratio-0.01
+                    ratio = ratio - 0.01
                     change1 = True
                 else:
                     ratio = ratio + 0.01
@@ -106,7 +110,6 @@ def Warp_source(aff, img, best_transform, height, width):
 
 
 def apply_transform(points, transform):
-
     # Add a third coordinate with value 1 to the points array
     points = np.hstack([points, np.ones((points.shape[0], 1))])
 
@@ -144,7 +147,8 @@ def ransac(src_pts, dst_pts, good_matches, n_iterations, threshold, aff=True):
         random_indices = np.random.choice(len(src_pts), 4, replace=False)
 
         # Compute the transformation
-        transform = affine_homography_transform(src_pts[combinations_array[i]].copy(), dst_pts[combinations_array[i]].copy(), aff)
+        transform = affine_homography_transform(src_pts[combinations_array[i]].copy(),
+                                                dst_pts[combinations_array[i]].copy(), aff)
 
         if transform is not None:
             # Calculate the residuals
@@ -182,7 +186,8 @@ def main_loop(img_list, aff):
         return None, None
     return best_match_idx, best_match_transform
 
-def paste(img1, img2):
+
+def paste(img1, img2, height, width):
     mask = img2 != 0
 
     # combine m1_t and m2_t using np.maximum
@@ -191,6 +196,7 @@ def paste(img1, img2):
     result[mask] = img2[mask]
     return result
 
+
 def update_group_list(img_list):
     grey_list = []
     for im in img_list:
@@ -198,29 +204,73 @@ def update_group_list(img_list):
 
     return img_list, grey_list
 
-img_files, txt_files = read_images('puzzles')
-i = 4
-transform, aff, height, width = read_transform(txt_files[i])
-img_list = img_files[i]
-img_list[0] = cv2.warpPerspective(img_list[0], transform, (width, height), flags=cv2.INTER_LINEAR)
-img_list, grey_list = update_group_list(img_list)
-while len(img_list)>1:
-    best_match_idx, best_match_transform = main_loop(grey_list, aff)
-    if best_match_idx == None:
+
+def inc_coverage_count(coverage_count, img):
+    if np.count_nonzero(img):
+        non_black_pixels = np.any(img != [0, 0, 0], axis=-1)
+        coverage_count[non_black_pixels] += 1
+
+    return coverage_count
+
+
+def show_coverage_count(coverage_count):
+    fig = plt.figure(figsize=(10, 4))
+    rows = 1
+    columns = 2
+    fig.add_subplot(rows, columns, 1)
+    plt.imshow(coverage_count), plt.axis('off'), plt.title("coverage count")
+    plt.colorbar()
+
+    fig.add_subplot(rows, columns, 2)
+    norm = matplotlib.colors.Normalize(vmin=0, vmax=2)
+    plt.imshow(coverage_count, norm=norm), plt.axis('off'), plt.title("coverage count (0 1 or 2)")
+    plt.colorbar()
+
+    plt.show()
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+def show_relative_images(list):
+    for i, img in enumerate(list):
+        plt.imshow(img), plt.title(f"relative img in index #{i}"), plt.show()
+
+
+def main():
+    img_files, txt_files = read_images('puzzles')
+    i = 4
+    transform, aff, height, width = read_transform(txt_files[i])
+    img_list = img_files[i]
+    img_list[0] = cv2.warpPerspective(img_list[0], transform, (width, height), flags=cv2.INTER_LINEAR)
+    img_list, grey_list = update_group_list(img_list)
+    coverage_count = np.zeros((height, width), dtype=np.uint8)
+    coverage_count = inc_coverage_count(coverage_count, img_list[0])
+    relative_list = [img_list[0]]
+    while len(img_list) > 1:
+        best_match_idx, best_match_transform = main_loop(grey_list, aff)
+        if best_match_idx is None:
+            plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
+            print("error in", i, "puzzle, length of image list is ", len(img_list), "\n")
+            img_list = []
+        else:
+            print("best match is: ", best_match_idx)
+            warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
+            coverage_count = inc_coverage_count(coverage_count, warped)
+            relative_list.append(warped)
+            new_list = [paste(img_list[0], warped, height, width)]
+            for j in range(len(img_list)):
+                if j != 0 and j != best_match_idx:
+                    new_list.append(img_list[j])
+
+            img_list = new_list
+            img_list, grey_list = update_group_list(img_list)
+            # plt.imshow(img_list[0]), plt.show()
+
+    if len(img_list) > 0:
         plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
-        print("error in", i, "puzzle, length of image list is ", len(img_list), "\n")
-        img_list = []
-    else:
-        print("best match is: ", best_match_idx)
-        warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
-        new_list = [paste(img_list[0], warped)]
-        for j in range(len(img_list)):
-            if j!= 0 and j!=best_match_idx:
-                new_list.append(img_list[j])
+        show_coverage_count(coverage_count)
+        print("we matched", len(relative_list), "pieces successfully")
+        show_relative_images(relative_list)
 
-        img_list = new_list
-        img_list, grey_list = update_group_list(img_list)
-        #plt.imshow(img_list[0]), plt.show()
 
-if len(img_list)>0:
-    plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
+main()
