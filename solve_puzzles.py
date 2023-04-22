@@ -1,7 +1,9 @@
 import os
 import cv2
+import matplotlib
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from PIL import Image, ImageChops
 
 
@@ -135,7 +137,7 @@ def ransac(kp1, kp2, matches, n_iterations, threshold, aff=True):
     return best_transform, best_inliers
 
 
-def added_image(added_images, height, width, group_index):
+def added_image_func(added_images, height, width, group_index):
     zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
     for i, img in enumerate(added_images):
         if np.count_nonzero(img) and i != 4:
@@ -144,8 +146,7 @@ def added_image(added_images, height, width, group_index):
                 for j in range(len(img[0])):
                     if not np.count_nonzero(zeros_img[i][j]):
                         zeros_img[i][j] = img[i][j]
-    # zeros_img = cv2.warpPerspective(zeros_img, transform, (width, height))
-    plt.imshow(zeros_img), plt.title(f"image group #{group_index}"), plt.show()
+    # plt.imshow(zeros_img), plt.title(f"image group #{group_index}"), plt.show()
     return zeros_img
 
 
@@ -201,7 +202,8 @@ def read_transform(filename):
     width = int("".join([char for char in filename.split("_")[-2] if char.isdigit()]))
     return transform, aff, height, width
 
-def loop(n_iterations, threshold, img_list, transform, aff, height, width ,zeros_img):
+
+def loop(n_iterations, threshold, img_list, transform, aff, height, width ,zeros_img, coverage_count):
     img_list, grey_list = update_list(img_list, transform, height, width)
     # run on the new matches base on image_0 relative place
     kp_des = get_kp_and_des(grey_list)
@@ -237,13 +239,42 @@ def loop(n_iterations, threshold, img_list, transform, aff, height, width ,zeros
                 added_images_num += 1
 
         img_group += 1
-        new_image = added_image(added_images, height, width, img_group)
+        coverage_count = inc_coverage_count(coverage_count, added_images)
+        new_image = added_image_func(added_images, height, width, img_group)
         added_image_list.append(new_image)
         img_list, grey_list = update_list(img_list, transform, height, width)
         kp_des = get_kp_and_des(grey_list)
         matches = ratio_test(kp_des)
 
-    return added_image_list
+    return added_image_list, coverage_count
+
+
+def inc_coverage_count(coverage_count, added_images):
+    for i, img in enumerate(added_images):
+        if np.count_nonzero(img):
+            non_black_pixels = np.any(img != [0, 0, 0], axis=-1)
+            coverage_count[non_black_pixels] += 1
+
+    return coverage_count
+
+
+def show_coverage_count(coverage_count):
+    fig = plt.figure(figsize=(10, 4))
+    rows = 1
+    columns = 2
+    fig.add_subplot(rows, columns, 1)
+    plt.imshow(coverage_count), plt.axis('off'), plt.title("coverage count")
+    plt.colorbar()
+
+    fig.add_subplot(rows, columns, 2)
+    norm = matplotlib.colors.Normalize(vmin=0, vmax=2)
+    plt.imshow(coverage_count, norm=norm), plt.axis('off'), plt.title("coverage count (0 1 or 2)")
+    plt.colorbar()
+
+    plt.show()
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
 
 def solve_puzzle(img_file, txt_file):
     n_iterations = 1000
@@ -252,22 +283,11 @@ def solve_puzzle(img_file, txt_file):
     transform, aff, height, width = read_transform(txt_file)
     height, width = height, width
     zeros_img = np.zeros((height, width, 3), dtype=np.uint8)
-
-    final_list = loop(n_iterations, threshold, img_list, transform, aff, height, width, zeros_img)
+    coverage_count = np.zeros((height, width), dtype=np.uint8)
+    final_list, coverage_count = loop(n_iterations, threshold, img_list, transform, aff, height, width, zeros_img, coverage_count)
     while len(final_list) > 1:
-        final_list = loop(n_iterations, threshold, final_list, np.eye(3, 3), aff, height, width, zeros_img)
-
-    return final_list[0]
-
-    # merge the merged groups of matches that we found in the previous step
-    # img_list, grey_list = update_group_list(added_image_list)
-    # kp_des = get_kp_and_des(grey_list)
-    # matches = ratio_test(kp_des)
-    # print(matches)
-    """
-    TODO: 1. merge groups of matches (groups in added_image_list)
-          2. mapped groups into blank pic by intersections
-    """
+        final_list, coverage_count = loop(n_iterations, threshold, final_list, np.eye(3, 3), aff, height, width, zeros_img, coverage_count)
+    return final_list[0], coverage_count
 
 
 # NOTE: This solution not ready yet.
@@ -280,7 +300,8 @@ def main():
     #    solve_puzzle(img_file, txt_files[i])
 
     i = 4
-    image = solve_puzzle(img_files[i], txt_files[i])
+    image, coverage_count = solve_puzzle(img_files[i], txt_files[i])
     plt.imshow(image), plt.title(f"final #{i}"), plt.show()
+    show_coverage_count(coverage_count)
 
 main()
