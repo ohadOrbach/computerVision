@@ -2,10 +2,11 @@ import cv2
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import itertools
 
-ratio = 0.8
-number_of_good_matches = 4
-n_iterations, threshold = 1000, 15
+number_of_good_matches_low = 4
+number_of_good_matches_high = 15
+n_iterations, threshold = 1000, 10
 
 def read_images(main_dir):
     txt_files = []
@@ -42,6 +43,7 @@ def get_kp_and_des(list_of_images):
     return kp_des
 
 def ratio_test(kp_des):
+    ratio = 0.5
     bf = cv2.BFMatcher()
     kp1, des1 = kp_des[0]
     matches_list = []
@@ -51,12 +53,27 @@ def ratio_test(kp_des):
             # Match the descriptors using the Brute-Force Matcher
             matches = bf.knnMatch(des1, des2, k=2)
             # Apply the ratio test to filter out false matches
-            good_matches = []
-            for m, n in matches:
-                if m.distance < ratio * n.distance:
-                    good_matches.append(m)
-            if len(good_matches) > number_of_good_matches:
-                matches_list.append((idx, good_matches))
+            cont = True
+            change1 = False
+            change2 = False
+            while cont:
+                good_matches = []
+                for m, n in matches:
+                    if m.distance < ratio * n.distance:
+                        good_matches.append(m)
+                if len(good_matches) > number_of_good_matches_low and len(good_matches)<number_of_good_matches_high:
+                    matches_list.append((idx, good_matches))
+                    ratio = 0.5
+                    cont = False
+                elif len(good_matches) > number_of_good_matches_low:
+                    ratio=ratio-0.01
+                    change1 = True
+                else:
+                    ratio = ratio + 0.01
+                    change2 = True
+                if ratio == 0.1 or ratio == 0.9 or (change1 == True and change2 == True):
+                    ratio = 0.5
+                    cont = False
     return matches_list
 
 
@@ -114,13 +131,20 @@ def calculate_residuals(src_pts, dst_pts, transform):
 def ransac(src_pts, dst_pts, good_matches, n_iterations, threshold, aff=True):
     best_match_transform = None
     best_match_ratio = 0
+    most_inliers = 0
+    rnd = 0
+    arr = list(range(len(src_pts)))
+    combinations = itertools.combinations(arr, 3)
 
-    for i in range(n_iterations):
+    # Convert the combinations to sets to remove duplicates
+    unique_combinations = set([frozenset(c) for c in combinations])
+    combinations_array = [np.array(list(c)) for c in unique_combinations]
+    for i in range(len(combinations_array)):
         # Randomly select a set of matches
         random_indices = np.random.choice(len(src_pts), 4, replace=False)
 
         # Compute the transformation
-        transform = affine_homography_transform(src_pts[random_indices].copy(), dst_pts[random_indices].copy(), aff)
+        transform = affine_homography_transform(src_pts[combinations_array[i]].copy(), dst_pts[combinations_array[i]].copy(), aff)
 
         if transform is not None:
             # Calculate the residuals
@@ -130,11 +154,12 @@ def ransac(src_pts, dst_pts, good_matches, n_iterations, threshold, aff=True):
             inliers = (residuals < threshold).sum()
 
             match_ratio = inliers / len(good_matches)
-            if match_ratio > best_match_ratio:
-                best_match_ratio = match_ratio
+
+            if inliers > most_inliers:
+                most_inliers = inliers
                 best_match_transform = transform
 
-    return best_match_transform, best_match_ratio
+    return best_match_transform, most_inliers
 
 
 def main_loop(img_list, aff):
@@ -151,6 +176,7 @@ def main_loop(img_list, aff):
         best_transform, match_ratio = ransac(src_pts, dst_pts, good_matches, n_iterations, threshold, aff)
         if match_ratio > best_match_ratio:
             best_match_idx = idx
+            best_match_ratio = match_ratio
             best_match_transform = best_transform
     if best_match_idx == -1:
         return None, None
@@ -173,7 +199,7 @@ def update_group_list(img_list):
     return img_list, grey_list
 
 img_files, txt_files = read_images('puzzles')
-i = 15
+i = 4
 transform, aff, height, width = read_transform(txt_files[i])
 img_list = img_files[i]
 img_list[0] = cv2.warpPerspective(img_list[0], transform, (width, height), flags=cv2.INTER_LINEAR)
@@ -185,6 +211,7 @@ while len(img_list)>1:
         print("error in", i, "puzzle, length of image list is ", len(img_list), "\n")
         img_list = []
     else:
+        print("best match is: ", best_match_idx)
         warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
         new_list = [paste(img_list[0], warped)]
         for j in range(len(img_list)):
