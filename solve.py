@@ -22,10 +22,13 @@ def read_images(main_dir):
                 if not img_files or img_files[-1][0] != dirpath:
                     if len(img_files) > 0:
                         img_files[-1].pop(0)
+                        img_names[-1].pop(0)
                     img_files.append([dirpath])
                     img_names.append([dirpath])
                 img_files[-1].append(cv2.imread(os.path.join(dirpath, filename)))
                 img_names[-1].append(filename)
+    img_files[-1].pop(0)
+    img_names[-1].pop(0)
     return img_files, txt_files, img_names
 
 
@@ -254,9 +257,12 @@ def save_images(images, directory):
         filename = f"image_{i}.png"
         cv2.imwrite(os.path.join(directory, filename), image)
 
+stop_dict = {'0': 0, '1':20}
 def main():
     img_files, txt_files, img_names = read_images('puzzles')
-    i = 8
+    i = 0
+    stop_img = stop_dict[str(i)]
+    count = 1
     transform, aff, height, width = read_transform(txt_files[i])
     img_list = img_files[i]
     names = img_names[i]
@@ -266,13 +272,12 @@ def main():
     coverage_count = inc_coverage_count(coverage_count, img_list[0])
     relative_list = [img_list[0]]
     while len(img_list) > 1:
+        count +=1
         best_match_idx, best_match_transform = main_loop(grey_list, aff)
-        if best_match_idx is None:
-            plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
+        if best_match_idx is None or count == stop_img:
             print("error in", i, "puzzle, length of image list is ", len(img_list), "\n")
-            img_list = []
+            img_list = [img_list[0]]
         else:
-            print("best match is: ", best_match_idx)
             warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
             coverage_count = inc_coverage_count(coverage_count, warped)
             relative_list.append(warped)
@@ -285,11 +290,11 @@ def main():
 
             img_list = new_list
             img_list, grey_list = update_group_list(img_list)
-            plt.imshow(img_list[0]), plt.title(f"added #{names[j]}"), plt.show()
+            #plt.imshow(img_list[0]), plt.title(f"added #{names[j]}"), plt.show()
 
     if len(img_list) > 0:
         plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
-        #show_coverage_count(coverage_count)
+        show_coverage_count(coverage_count)
         print("we matched", len(relative_list), "pieces successfully")
         #show_relative_images(relative_list)
         save_images(relative_list, f'relative #{i}')
