@@ -83,40 +83,6 @@ def ratio_test(kp_des):
                     cont = False
     return matches_list
 
-def ratio_test2(kp_des):
-    ratio = 0.5
-    bf = cv2.BFMatcher()
-    matches_list = []
-    for i in range(len(kp_des)):
-        kp1, des1 = kp_des[i]
-        for j in range(i+1, len(kp_des)):
-            kp2, des2 = kp_des[j]
-            # Match the descriptors using the Brute-Force Matcher
-            matches = bf.knnMatch(des1, des2, k=2)
-            # Apply the ratio test to filter out false matches
-            cont = True
-            change1 = False
-            change2 = False
-            while cont:
-                good_matches = []
-                for m, n in matches:
-                    if m.distance < ratio * n.distance:
-                        good_matches.append(m)
-                if len(good_matches) > number_of_good_matches_low and len(good_matches) < number_of_good_matches_high:
-                    matches_list.append((i, j, good_matches))
-                    ratio = 0.5
-                    cont = False
-                elif len(good_matches) > number_of_good_matches_low:
-                    ratio = ratio - 0.01
-                    change1 = True
-                else:
-                    ratio = ratio + 0.01
-                    change2 = True
-                if ratio == 0.1 or ratio == 0.9 or (change1 == True and change2 == True):
-                    ratio = 0.5
-                    cont = False
-    return matches_list
-
 def affine_homography_transform(src_pts, dst_pts, aff=True):
     """
     Compute affine or perspective transformation matrix between two images
@@ -226,33 +192,6 @@ def main_loop(img_list, aff):
     #plt.imshow(matching_image), plt.show()
     return best_match_idx, best_match_transform
 
-def main_loop3(img_list, aff):
-    kp_des = get_kp_and_des(img_list)
-    best_match_ratio = 0
-    best_match_i = -1
-    best_match_j = -1
-    best_match_transform = None
-    matches = ratio_test2(kp_des)
-    for i, j, good_matches in matches:
-        kp1, des1 = kp_des[i]
-        kp2, des2 = kp_des[j]
-        dst_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches])
-        src_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches])
-        best_transform, match_ratio = ransac(src_pts, dst_pts, good_matches, n_iterations, threshold, aff)
-        if match_ratio > best_match_ratio:
-            best_match_i = i
-            best_match_j = j
-            best_match_ratio = match_ratio
-            best_match_transform = best_transform
-            gm = good_matches
-    if best_match_i == -1 or best_match_j == -1:
-        return None, None
-    kp1, des1 = kp_des[best_match_i]
-    kp2, des2 = kp_des[best_match_j]
-    matching_image = cv2.drawMatches(img_list[best_match_i], kp1, img_list[best_match_j], kp2, gm, None)
-    #plt.imshow(matching_image), plt.show()
-    return (best_match_i, best_match_j, best_match_transform)
-
 
 def paste(img1, img2, height, width):
     mask = img2 != 0
@@ -302,6 +241,18 @@ def show_relative_images(list):
     for i, img in enumerate(list):
         plt.imshow(img), plt.title(f"relative img in index #{i}"), plt.show()
 
+def save_images(images, directory):
+    # Check if directory exists and delete its contents
+    if os.path.exists(directory):
+        for file in os.listdir(directory):
+            os.remove(os.path.join(directory, file))
+    else:
+        os.makedirs(directory)
+
+    # Save images to directory
+    for i, image in enumerate(images):
+        filename = f"image_{i}.png"
+        cv2.imwrite(os.path.join(directory, filename), image)
 
 def main():
     img_files, txt_files, img_names = read_images('puzzles')
@@ -341,46 +292,8 @@ def main():
         #show_coverage_count(coverage_count)
         print("we matched", len(relative_list), "pieces successfully")
         #show_relative_images(relative_list)
-
-def main2():
-    img_files, txt_files, img_names = read_images('puzzles')
-    i = 4
-    transform, aff, height, width = read_transform(txt_files[i])
-    img_list = img_files[i]
-    names = img_names[i]
-    img_list[0] = cv2.warpPerspective(img_list[0], transform, (width, height), flags=cv2.INTER_CUBIC)
-    img_list, grey_list = update_group_list(img_list)
-    coverage_count = np.zeros((height, width), dtype=np.uint8)
-    #coverage_count = inc_coverage_count(coverage_count, img_list[0])
-    relative_list = [img_list[0]]
-    while len(img_list) > 1:
-        best_match_idx1, best_match_idx2, best_match_transform = main_loop3(grey_list, aff)
-        if best_match_idx1 is None:
-            plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
-            print("error in", i, "puzzle, length of image list is ", len(img_list), "\n")
-            img_list = []
-        else:
-            print("best match is: ", best_match_idx1, best_match_idx2)
-            warped = Warp_source(aff, img_list[best_match_idx2], best_match_transform, height, width)
-            #coverage_count = inc_coverage_count(coverage_count, warped)
-            relative_list.append(warped)
-            if img_list[best_match_idx1].shape != warped.shape:
-                img_list[best_match_idx1] = cv2.warpPerspective(img_list[best_match_idx1], np.eye(3,3), (width, height), flags=cv2.INTER_CUBIC)
-            new_list = [paste(img_list[best_match_idx1], warped, height, width)]
-            new_names = ['combine']
-            for j in range(len(img_list)):
-                if j != best_match_idx1 and j != best_match_idx2:
-                    new_list.append(img_list[j])
-                    new_names.append(names[j])
-
-            img_list = new_list
-            img_list, grey_list = update_group_list(img_list)
-            plt.imshow(img_list[0]), plt.title(f"added #{names[j]}"), plt.show()
-
-    if len(img_list) > 0:
-        plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
-        # show_coverage_count(coverage_count)
-        print("we matched", len(relative_list), "pieces successfully")
-        # show_relative_images(relative_list)
+        save_images(relative_list, f'relative #{i}')
+        filename = f"final_img#{i}.png"
+        cv2.imwrite(os.path.join(filename), img_list[0])
 
 main()
