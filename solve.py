@@ -4,6 +4,10 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import itertools
+from tqdm import tqdm
+import warnings
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 number_of_good_matches_low = 4
 number_of_good_matches_high = 15
@@ -142,7 +146,10 @@ def ransac(src_pts, dst_pts, good_matches, n_iterations, threshold, aff=True):
     most_inliers = 0
     rnd = 0
     arr = list(range(len(src_pts)))
-    combinations = itertools.combinations(arr, 3)
+    if aff:
+        combinations = itertools.combinations(arr, 3)
+    else:
+        combinations = itertools.combinations(arr, 4)
 
     # Convert the combinations to sets to remove duplicates
     unique_combinations = set([frozenset(c) for c in combinations])
@@ -235,70 +242,78 @@ def show_coverage_count(coverage_count):
     plt.imshow(coverage_count, norm=norm), plt.axis('off'), plt.title("coverage count (0 1 or 2)")
     plt.colorbar()
 
-    plt.show()
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    return fig
 
 
 def show_relative_images(list):
     for i, img in enumerate(list):
         plt.imshow(img), plt.title(f"relative img in index #{i}"), plt.show()
 
-def save_images(images, directory):
-    # Check if directory exists and delete its contents
+def make_dir(directory):
     if os.path.exists(directory):
         for file in os.listdir(directory):
             os.remove(os.path.join(directory, file))
     else:
         os.makedirs(directory)
-
+def save_images(images, names, directory):
+    make_dir(directory)
     # Save images to directory
     for i, image in enumerate(images):
-        filename = f"image_{i}.png"
+        filename = names[i]
         cv2.imwrite(os.path.join(directory, filename), image)
 
-stop_dict = {'0': 0, '1':20}
+stop_dict = {'0': 100, '1':20, '2':100, '3':100,
+             '4': 100, '5':100, '6':100, '7':100,
+             '8': 100, '9':12}
 def main():
     img_files, txt_files, img_names = read_images('puzzles')
-    i = 0
-    stop_img = stop_dict[str(i)]
-    count = 1
-    transform, aff, height, width = read_transform(txt_files[i])
-    img_list = img_files[i]
-    names = img_names[i]
-    img_list[0] = cv2.warpPerspective(img_list[0], transform, (width, height), flags=cv2.INTER_LINEAR)
-    img_list, grey_list = update_group_list(img_list)
-    coverage_count = np.zeros((height, width), dtype=np.uint8)
-    coverage_count = inc_coverage_count(coverage_count, img_list[0])
-    relative_list = [img_list[0]]
-    while len(img_list) > 1:
-        count +=1
-        best_match_idx, best_match_transform = main_loop(grey_list, aff)
-        if best_match_idx is None or count == stop_img:
-            print("error in", i, "puzzle, length of image list is ", len(img_list), "\n")
-            img_list = [img_list[0]]
-        else:
-            warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
-            coverage_count = inc_coverage_count(coverage_count, warped)
-            relative_list.append(warped)
-            new_list = [paste(img_list[0], warped, height, width)]
-            new_names = ['combine']
-            for j in range(len(img_list)):
-                if j != 0 and j != best_match_idx:
-                    new_list.append(img_list[j])
-                    new_names.append(names[j])
+    for i in range(19, len(txt_files)):
+        stop_img = stop_dict.get(str(i), 1000)
+        count = 1
+        transform, aff, height, width = read_transform(txt_files[i])
+        name_of_puzzle = txt_files[i].split('\\')[1]
+        img_list = img_files[i]
+        names = img_names[i]
+        img_list[0] = cv2.warpPerspective(img_list[0], transform, (width, height), flags=cv2.INTER_LINEAR)
+        img_list, grey_list = update_group_list(img_list)
+        coverage_count = np.zeros((height, width), dtype=np.uint8)
+        coverage_count = inc_coverage_count(coverage_count, img_list[0])
+        relative_list = [img_list[0]]
+        relative_list_names = [names[0]]
+        total_len = len(img_list)
+        with tqdm(total=min(stop_img,len(img_list))) as pbar:
+            while len(img_list) > 1:
+                count +=1
+                best_match_idx, best_match_transform = main_loop(grey_list, aff)
+                if best_match_idx is None or count == stop_img:
+                    img_list = [img_list[0]]
+                else:
+                    warped = Warp_source(aff, img_list[best_match_idx], best_match_transform, height, width)
+                    coverage_count = inc_coverage_count(coverage_count, warped)
+                    relative_list.append(warped)
+                    relative_list_names.append(names[best_match_idx])
+                    new_list = [paste(img_list[0], warped, height, width)]
+                    new_names = ['combine']
+                    for j in range(len(img_list)):
+                        if j != 0 and j != best_match_idx:
+                            new_list.append(img_list[j])
+                            new_names.append(names[j])
 
-            img_list = new_list
-            img_list, grey_list = update_group_list(img_list)
-            #plt.imshow(img_list[0]), plt.title(f"added #{names[j]}"), plt.show()
+                    img_list = new_list
+                    names = new_names
+                    img_list, grey_list = update_group_list(img_list)
+                    #plt.imshow(img_list[0]), plt.title(f"added c{count}"), plt.show()
+                    pbar.update(3)
 
-    if len(img_list) > 0:
-        plt.imshow(img_list[0]), plt.title(f"final #{i}"), plt.show()
-        show_coverage_count(coverage_count)
-        print("we matched", len(relative_list), "pieces successfully")
-        #show_relative_images(relative_list)
-        save_images(relative_list, f'relative #{i}')
-        filename = f"final_img#{i}.png"
-        cv2.imwrite(os.path.join(filename), img_list[0])
+        if len(img_list) > 0:
+            plt.imshow(img_list[0]/255.0), plt.title(f"solution_{count}_{total_len} {name_of_puzzle}"), plt.show()
+            dir_name = f'{name_of_puzzle}_solution'
+            save_images(relative_list, relative_list_names, dir_name)
+            fig = show_coverage_count(coverage_count)
+            filename = f"coverage count {name_of_puzzle}.png"
+            plt.savefig(os.path.join(os.path.join(dir_name, filename)), dpi=300)
+            plt.show()
+            filename = f"solution_{count}_{total_len}.jpeg"
+            cv2.imwrite(os.path.join(dir_name,filename), img_list[0])
 
 main()
