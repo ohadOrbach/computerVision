@@ -264,7 +264,9 @@ def save_images(images, names, directory):
 
 stop_dict = {'0': 100, '1':20, '2':100, '3':100,
              '4': 100, '5':100, '6':100, '7':100,
-             '8': 100, '9':12}
+             '8': 100, '9':12, '10':100, '11':7,
+             '12': 100, '13':100, '14':100, '15':100,
+             '16': 19, '17':20, '18':28, '19':2}
 def main():
     img_files, txt_files, img_names = read_images('puzzles')
     for i in range(19, len(txt_files)):
