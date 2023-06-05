@@ -14,78 +14,97 @@ def read_intrinsic_matrix(file_path):
     return intrinsic_matrix
 
 
-def read_disparity_map(file_path):
-    return cv2.imread(file_path, cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
+def generate_novel_views(reference_view, depth_map, intrinsics_matrix_inv, extrinsics_list):
+    height, width = reference_view.shape[:2]
+    novel_views = []
+
+    # Construct the camera matrix P with identity rotation matrix and variable translation vectors
+    camera_matrix = np.eye(3, 4)
+
+    for extrinsics in extrinsics_list:
+        # Set the translation vector T in the camera matrix
+        camera_matrix[:, 3] = extrinsics[:3, 3]
+
+        # Initialize novel_view for each extrinsics
+        novel_view = np.zeros_like(reference_view)
+
+        for y in range(height):
+            for x in range(width):
+                depth = depth_map[y, x]
+
+                if not np.isinf(depth) and not np.isnan(depth) and depth > 0:
+                    # Transform pixel coordinates to homogeneous coordinates
+                    pixel_coords = np.array([x, y, 1])
+
+                    # Reproject pixel coordinates to 3D using inverse intrinsics matrix
+                    point_3d = depth * np.dot(intrinsics_matrix_inv, pixel_coords)
+
+                    # Apply the camera matrix transformation
+                    transformed_point = np.dot(camera_matrix, np.append(point_3d, 1))
+
+                    # Normalize the transformed point's homogeneous coordinates
+                    if transformed_point[2] != 0:
+                        transformed_point /= transformed_point[2]
+
+                        # Map the 3D point back to the reference view
+                        transformed_coords = np.dot(intrinsics_matrix, transformed_point[:3])
+
+                        # Retrieve the transformed pixel coordinates
+                        x_proj, y_proj = transformed_coords[:2] / transformed_coords[2]
+
+                        # Check if the projected coordinates are within the image boundaries
+                        if 0 <= x_proj < width and 0 <= y_proj < height:
+                            x_min, y_min = int(np.floor(x_proj)), int(np.floor(y_proj))
+                            x_max, y_max = x_min + 1, y_min + 1
+
+                            if x_max < width and y_max < height:
+                                # Compute the depth value at the projected coordinates
+                                interpolated_depth = (1 - (x_proj - x_min)) * (1 - (y_proj - y_min)) * depth_map[y_min, x_min] + \
+                                                     (x_proj - x_min) * (1 - (y_proj - y_min)) * depth_map[y_min, x_max] + \
+                                                     (1 - (x_proj - x_min)) * (y_proj - y_min) * depth_map[y_max, x_min] + \
+                                                     (x_proj - x_min) * (y_proj - y_min) * depth_map[y_max, x_max]
+
+                                if depth <= interpolated_depth:
+                                    # Interpolate the pixel value using the neighboring pixels
+                                    dx = x_proj - x_min
+                                    dy = y_proj - y_min
+
+                                    pixel_value = (1 - dx) * (1 - dy) * reference_view[y_min, x_min] + \
+                                                  dx * (1 - dy) * reference_view[y_min, x_max] + \
+                                                  (1 - dx) * dy * reference_view[y_max, x_min] + \
+                                                  dx * dy * reference_view[y_max, x_max]
+
+                                    novel_view[y, x] = pixel_value
+
+        novel_views.append(novel_view)
+        cv2.imshow(f'synthesized_image_{len(novel_views) - 1}.jpg', novel_view)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    return novel_views
 
 
-def read_max_disparity(file_path):
-    with open(file_path, 'r') as f:
-        max_disparity = float(f.read())
-    return max_disparity
-
-
-def compute_depth_map(disparity_map, max_disparity):
-    depth_map = (max_disparity / (disparity_map + 1e-6))
-    return depth_map
-
-
-def generate_new_views(left_image, right_image, left_disparity_map, right_disparity_map, intrinsics_matrix, max_disparity):
-    num_views = 11
-    baseline_interval = 0.1
-    new_views = []
+def create_extrinsics_list(baseline, num_views):
+    extrinsics_list = []
     for i in range(num_views):
-        baseline = (i + 1) * baseline_interval
+        # Compute the translation vector T for each camera position
+        translation = np.array([i * baseline, 0, 0])
 
-        translation = np.array([baseline, 0, 0])  # Adjust translation for leftward movement
+        # Construct the extrinsic matrix with identity rotation and the corresponding translation
         extrinsic_matrix = np.eye(4)
-        extrinsic_matrix[0:3, 3] = translation
-        # Calculate the inverse of the intrinsic matrix
-        intrinsics_inv = np.linalg.inv(intrinsics_matrix)
-        # Calculate the depth maps
-        left_depth_map = compute_depth_map(left_disparity_map, max_disparity)
-        right_depth_map = compute_depth_map(right_disparity_map, max_disparity)
-        synthesized_image = np.zeros_like(left_image, dtype=np.uint8)
-        u, v = np.meshgrid(np.arange(left_image.shape[1]), np.arange(left_image.shape[0]), indexing='xy')
-        u = u.reshape(-1)
-        v = v.reshape(-1)
-        left_depth_map = left_depth_map.reshape(-1)
-        right_depth_map = right_depth_map.reshape(-1)
+        extrinsic_matrix[:3, 3] = translation
 
-        # Calculate the 3D points in the camera coordinate system
-        points_3d_left = np.dot(intrinsics_inv, np.array([u, v, np.ones_like(u)])) * left_depth_map
-
-        # Apply the extrinsic matrix transformation
-        transformed_coords = np.dot(extrinsic_matrix, np.vstack((points_3d_left, np.ones_like(u))))
-
-        # Map the 3D points back to the left camera plane
-        transformed_coords /= transformed_coords[3]  # Divide by homogeneous coordinate
-        transformed_coords = np.dot(intrinsics_matrix, transformed_coords[:3])
-
-        # Convert the transformed coordinates to image coordinates
-        u_new, v_new = transformed_coords[0] / transformed_coords[2], transformed_coords[1] / transformed_coords[2]
-        u_new = np.round(u_new).astype(int)
-        v_new = np.round(v_new).astype(int)
-        # Mask out-of-bounds coordinates
-        valid_indices = np.logical_and.reduce(
-            (u_new >= 0, v_new >= 0, u_new < left_image.shape[1], v_new < left_image.shape[0]))
-        # Copy pixel values from the left image to the synthesized image
-        synthesized_image[v[valid_indices], u[valid_indices]] = left_image[v_new[valid_indices], u_new[valid_indices]]
-        new_views.append(synthesized_image)
-
-    return new_views
+        extrinsics_list.append(extrinsic_matrix)
+    return extrinsics_list
 
 
-# Example usage
 left_image = cv2.imread('example/im_left.jpg', cv2.IMREAD_COLOR)
-right_image = cv2.imread('example/im_right.jpg', cv2.IMREAD_COLOR)
-left_disparity_map = read_disparity_map('example/disp_left.jpg')
-right_disparity_map = read_disparity_map('example/disp_right.jpg')
 intrinsics_matrix = read_intrinsic_matrix('example/K.txt')
-max_disparity = read_max_disparity('example/max_disp.txt')
+left_depth_map = np.loadtxt('example/depth_left.txt', delimiter=",")
+baseline = 0.01  # Baseline in meters
+num_views = 11  # Number of desired views
+
+extrinsics_list = create_extrinsics_list(baseline, num_views)
 
 # Generate new views
-new_views = generate_new_views(left_image, right_image, left_disparity_map, right_disparity_map, intrinsics_matrix, max_disparity)
-
-# Save synthesized images
-for i, synthesized_image in enumerate(new_views):
-    cv2.imwrite(f'synthesized_image_{i}.jpg', synthesized_image)
+novel_views = generate_novel_views(left_image, left_depth_map, np.linalg.inv(intrinsics_matrix), extrinsics_list)
