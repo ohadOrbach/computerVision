@@ -268,12 +268,12 @@ stop_dict = {'0': 100, '1':20, '2':100, '3':100,
              '12': 100, '13':100, '14':100, '15':100,
              '16': 19, '17':20, '18':28, '19':2}
 def main():
-    img_files, txt_files, img_names = read_images('puzzles')
+    img_files, txt_files, img_names = read_images('ex1/puzzles')
     for i in range(19, len(txt_files)):
         stop_img = stop_dict.get(str(i), 1000)
         count = 1
         transform, aff, height, width = read_transform(txt_files[i])
-        name_of_puzzle = txt_files[i].split('\\')[1]
+        name_of_puzzle = txt_files[i].split('/')[2]
         img_list = img_files[i]
         names = img_names[i]
         img_list[0] = cv2.warpPerspective(img_list[0], transform, (width, height), flags=cv2.INTER_LINEAR)
