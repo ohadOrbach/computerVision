@@ -34,8 +34,7 @@ def generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics
         # Calculate reprojection of all image coordinates to 3D
         points_3d_left = np.zeros((height, width, 3))
         points_3d_right = np.zeros((height, width, 3))
-        valid_indices = np.where(
-            (~np.isnan(left_depth_map)) & (~np.isnan(right_depth_map)) & (left_depth_map != 0) & (right_depth_map != 0))
+        valid_indices = np.where(~np.isnan(left_depth_map))
 
         for y, x in zip(valid_indices[0], valid_indices[1]):
             left_depth = left_depth_map[y, x]
@@ -64,8 +63,8 @@ def generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics
             left_pixel = np.dot(intrinsics_matrix, point_3d_left)
             left_pixel /= left_pixel[2]
 
-            left_x = int(left_pixel[0])
-            left_y = int(left_pixel[1])
+            left_x = int(round(left_pixel[0]))
+            left_y = int(round(left_pixel[1]))
 
             if 0 <= left_x < width and 0 <= left_y < height:
                 novel_view[left_y, left_x] = left_image[y, x]
@@ -73,6 +72,7 @@ def generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics
         novel_views.append(novel_view)
 
     return novel_views
+
 
 
 left_image = cv2.imread('example/im_left.jpg', cv2.IMREAD_COLOR)
