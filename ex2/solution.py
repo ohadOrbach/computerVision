@@ -156,6 +156,9 @@ for directory in directories:
     imgL = cv2.imread(os.path.join(directory, 'im_left.jpg'), cv2.IMREAD_GRAYSCALE)
     imgR = cv2.imread(os.path.join(directory, 'im_right.jpg'), cv2.IMREAD_GRAYSCALE)
 
+    imgLcolor = cv2.imread(os.path.join(directory, 'im_left.jpg'),  cv2.IMREAD_COLOR)
+    imgRcolor = cv2.imread(os.path.join(directory, 'im_right.jpg'),  cv2.IMREAD_COLOR)
+
     with open(os.path.join(directory, 'max_disp.txt')) as f:
         max_disp = int(f.read())
 
@@ -178,9 +181,7 @@ for directory in directories:
     depth_left = depth(focal_length, base_line, dl)
     depth_right = depth(focal_length, base_line, dr)
 
-    baseline = 0.1  # Baseline in meters
-
-    novel_views = generate_novel_views(imgL, depth_left, depth_right, K, baseline)
+    novel_views = generate_novel_views(imgLcolor, depth_left, depth_right, K, base_line)
 
     output_dir = os.path.join('results', directory)
     #os.makedirs(output_dir, exist_ok=True)
