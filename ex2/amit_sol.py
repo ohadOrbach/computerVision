@@ -14,97 +14,76 @@ def read_intrinsic_matrix(file_path):
     return intrinsic_matrix
 
 
-def generate_novel_views(reference_view, depth_map, intrinsics_matrix_inv, extrinsics_list):
-    height, width = reference_view.shape[:2]
+def generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics_matrix, baseline,
+                         num_views=11):
+    height, width = left_image.shape[:2]
     novel_views = []
 
-    # Construct the camera matrix P with identity rotation matrix and variable translation vectors
-    camera_matrix = np.eye(3, 4)
+    baseline_interval = 0.01  # 1 cm intervals on the baseline
+    for i in range(num_views):
+        # Compute the translation vector for each camera position
+        translation = np.array([baseline - (num_views - i) * baseline_interval, 0, 0])
 
-    for extrinsics in extrinsics_list:
-        # Set the translation vector T in the camera matrix
-        camera_matrix[:, 3] = extrinsics[:3, 3]
+        # Compute the extrinsics matrix for each camera position
+        extrinsics = np.eye(4)
+        extrinsics[:3, 3] = translation
 
-        # Initialize novel_view for each extrinsics
-        novel_view = np.zeros_like(reference_view)
+        # Compute the inverse of the extrinsics matrix
+        extrinsics_inv = np.linalg.inv(extrinsics)
 
-        for y in range(height):
-            for x in range(width):
-                depth = depth_map[y, x]
+        # Calculate reprojection of all image coordinates to 3D
+        points_3d_left = np.zeros((height, width, 3))
+        points_3d_right = np.zeros((height, width, 3))
+        valid_indices = np.where(
+            (~np.isnan(left_depth_map)) & (~np.isnan(right_depth_map)) & (left_depth_map != 0) & (right_depth_map != 0))
 
-                if not np.isinf(depth) and not np.isnan(depth) and depth > 0:
-                    # Transform pixel coordinates to homogeneous coordinates
-                    pixel_coords = np.array([x, y, 1])
+        for y, x in zip(valid_indices[0], valid_indices[1]):
+            left_depth = left_depth_map[y, x]
+            right_depth = right_depth_map[y, x]
 
-                    # Reproject pixel coordinates to 3D using inverse intrinsics matrix
-                    point_3d = depth * np.dot(intrinsics_matrix_inv, pixel_coords)
+            # Compute the 3D point in the left camera coordinate system
+            point_2d = np.array([x, y, 1])
+            point_3d_left = np.dot(np.linalg.inv(intrinsics_matrix), point_2d) * left_depth
+            points_3d_left[y, x] = point_3d_left
 
-                    # Apply the camera matrix transformation
-                    transformed_point = np.dot(camera_matrix, np.append(point_3d, 1))
+            # Compute the 3D point in the right camera coordinate system
+            point_3d_right = np.dot(np.linalg.inv(intrinsics_matrix), point_2d) * right_depth
+            points_3d_right[y, x] = point_3d_right
 
-                    # Normalize the transformed point's homogeneous coordinates
-                    if transformed_point[2] != 0:
-                        transformed_point /= transformed_point[2]
+        # Drop the 3D points back onto the left camera plane
+        novel_view = np.zeros_like(left_image)
+        valid_indices_3d = np.where(points_3d_left[:, :, 2] > 0)
 
-                        # Map the 3D point back to the reference view
-                        transformed_coords = np.dot(intrinsics_matrix, transformed_point[:3])
+        for y, x in zip(valid_indices_3d[0], valid_indices_3d[1]):
+            point_3d_left = points_3d_left[y, x]
 
-                        # Retrieve the transformed pixel coordinates
-                        x_proj, y_proj = transformed_coords[:2] / transformed_coords[2]
+            # Transform the 3D point to the left camera frame
+            point_3d_left = np.dot(extrinsics_inv, np.append(point_3d_left, 1))[:3]
 
-                        # Check if the projected coordinates are within the image boundaries
-                        if 0 <= x_proj < width and 0 <= y_proj < height:
-                            x_min, y_min = int(np.floor(x_proj)), int(np.floor(y_proj))
-                            x_max, y_max = x_min + 1, y_min + 1
+            # Project the 3D point onto the left camera plane
+            left_pixel = np.dot(intrinsics_matrix, point_3d_left)
+            left_pixel /= left_pixel[2]
 
-                            if x_max < width and y_max < height:
-                                # Compute the depth value at the projected coordinates
-                                interpolated_depth = (1 - (x_proj - x_min)) * (1 - (y_proj - y_min)) * depth_map[y_min, x_min] + \
-                                                     (x_proj - x_min) * (1 - (y_proj - y_min)) * depth_map[y_min, x_max] + \
-                                                     (1 - (x_proj - x_min)) * (y_proj - y_min) * depth_map[y_max, x_min] + \
-                                                     (x_proj - x_min) * (y_proj - y_min) * depth_map[y_max, x_max]
+            left_x = int(left_pixel[0])
+            left_y = int(left_pixel[1])
 
-                                if depth <= interpolated_depth:
-                                    # Interpolate the pixel value using the neighboring pixels
-                                    dx = x_proj - x_min
-                                    dy = y_proj - y_min
-
-                                    pixel_value = (1 - dx) * (1 - dy) * reference_view[y_min, x_min] + \
-                                                  dx * (1 - dy) * reference_view[y_min, x_max] + \
-                                                  (1 - dx) * dy * reference_view[y_max, x_min] + \
-                                                  dx * dy * reference_view[y_max, x_max]
-
-                                    novel_view[y, x] = pixel_value
+            if 0 <= left_x < width and 0 <= left_y < height:
+                novel_view[left_y, left_x] = left_image[y, x]
 
         novel_views.append(novel_view)
-        cv2.imshow(f'synthesized_image_{len(novel_views) - 1}.jpg', novel_view)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
 
     return novel_views
-
-
-def create_extrinsics_list(baseline, num_views):
-    extrinsics_list = []
-    for i in range(num_views):
-        # Compute the translation vector T for each camera position
-        translation = np.array([i * baseline, 0, 0])
-
-        # Construct the extrinsic matrix with identity rotation and the corresponding translation
-        extrinsic_matrix = np.eye(4)
-        extrinsic_matrix[:3, 3] = translation
-
-        extrinsics_list.append(extrinsic_matrix)
-    return extrinsics_list
 
 
 left_image = cv2.imread('example/im_left.jpg', cv2.IMREAD_COLOR)
 intrinsics_matrix = read_intrinsic_matrix('example/K.txt')
 left_depth_map = np.loadtxt('example/depth_left.txt', delimiter=",")
-baseline = 0.01  # Baseline in meters
-num_views = 11  # Number of desired views
-
-extrinsics_list = create_extrinsics_list(baseline, num_views)
+right_depth_map = np.loadtxt('example/depth_right.txt', delimiter=",")
+baseline = 0.1  # Baseline in meters
 
 # Generate new views
-novel_views = generate_novel_views(left_image, left_depth_map, np.linalg.inv(intrinsics_matrix), extrinsics_list)
+novel_views = generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics_matrix, baseline)
+
+# Save synthesized images
+for i, novel_view in enumerate(novel_views):
+    cv2.imwrite(f'synth_{i+1}.jpg', novel_view)
