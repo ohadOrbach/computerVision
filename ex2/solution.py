@@ -169,10 +169,8 @@ for directory in directories:
     depth_right = depth(focal_length, base_line, dr)
 
     intrinsics_matrix = read_intrinsic_matrix('example/K.txt')
-    baseline = 0.1  # Baseline in meters
-
     # Generate new views
-    novel_views = generate_novel_views(left_image, depth_left, depth_right, intrinsics_matrix, baseline)
+    novel_views = generate_novel_views(left_image, depth_left, depth_right, K, 0.1)
 
     # Save synthesized images
     for i, novel_view in enumerate(novel_views):
