@@ -14,17 +14,15 @@ def read_intrinsic_matrix(file_path):
     return intrinsic_matrix
 
 
-def generate_novel_views(left_image, right_image, disparity_map, depth_map, intrinsics_matrix, num_views=11):
+def generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics_matrix, baseline,
+                         num_views=11):
     height, width = left_image.shape[:2]
     novel_views = []
 
     baseline_interval = 0.01  # 1 cm intervals on the baseline
-
     for i in range(num_views):
-        baseline = (i + 1) * baseline_interval
-
         # Compute the translation vector for each camera position
-        translation = np.array([-baseline, 0, 0])
+        translation = np.array([baseline - (num_views - i) * baseline_interval, 0, 0])
 
         # Compute the extrinsics matrix for each camera position
         extrinsics = np.eye(4)
@@ -33,34 +31,44 @@ def generate_novel_views(left_image, right_image, disparity_map, depth_map, intr
         # Compute the inverse of the extrinsics matrix
         extrinsics_inv = np.linalg.inv(extrinsics)
 
-        # Initialize the novel view for each extrinsics
+        # Calculate reprojection of all image coordinates to 3D
+        points_3d_left = np.zeros((height, width, 3))
+        points_3d_right = np.zeros((height, width, 3))
+        valid_indices = np.where(
+            (~np.isnan(left_depth_map)) & (~np.isnan(right_depth_map)) & (left_depth_map != 0) & (right_depth_map != 0))
+
+        for y, x in zip(valid_indices[0], valid_indices[1]):
+            left_depth = left_depth_map[y, x]
+            right_depth = right_depth_map[y, x]
+
+            # Compute the 3D point in the left camera coordinate system
+            point_2d = np.array([x, y, 1])
+            point_3d_left = np.dot(np.linalg.inv(intrinsics_matrix), point_2d) * left_depth
+            points_3d_left[y, x] = point_3d_left
+
+            # Compute the 3D point in the right camera coordinate system
+            point_3d_right = np.dot(np.linalg.inv(intrinsics_matrix), point_2d) * right_depth
+            points_3d_right[y, x] = point_3d_right
+
+        # Drop the 3D points back onto the left camera plane
         novel_view = np.zeros_like(left_image)
+        valid_indices_3d = np.where(points_3d_left[:, :, 2] > 0)
 
-        for y in range(height):
-            for x in range(width):
-                disparity = disparity_map[y, x]
-                depth = depth_map[y, x]
+        for y, x in zip(valid_indices_3d[0], valid_indices_3d[1]):
+            point_3d_left = points_3d_left[y, x]
 
-                # Skip if the depth or disparity value is invalid or zero
-                if np.isnan(depth) or np.isnan(disparity) or depth == 0 or disparity == 0:
-                    continue
+            # Transform the 3D point to the left camera frame
+            point_3d_left = np.dot(extrinsics_inv, np.append(point_3d_left, 1))[:3]
 
-                # Compute the 3D point in the left camera frame using the depth and disparity
-                point_3d = np.dot(intrinsics_matrix, np.array([x, y, 1])) * (baseline / disparity)
+            # Project the 3D point onto the left camera plane
+            left_pixel = np.dot(intrinsics_matrix, point_3d_left)
+            left_pixel /= left_pixel[2]
 
-                # Compute the 3D point in the right camera frame by applying the extrinsics transformation
-                point_3d_right = np.dot(extrinsics_inv, np.append(point_3d, 1))[:3]
+            left_x = int(left_pixel[0])
+            left_y = int(left_pixel[1])
 
-                # Compute the corresponding pixel location in the right image using the inverse intrinsics matrix
-                right_pixel = np.dot(intrinsics_matrix, point_3d_right)
-                right_pixel /= right_pixel[2]
-
-                right_x = int(right_pixel[0])
-                right_y = int(right_pixel[1])
-
-                # Copy the pixel values from the right image to the novel view
-                if 0 <= right_x < width and 0 <= right_y < height:
-                    novel_view[y, x] = right_image[right_y, right_x]
+            if 0 <= left_x < width and 0 <= left_y < height:
+                novel_view[left_y, left_x] = left_image[y, x]
 
         novel_views.append(novel_view)
 
@@ -70,12 +78,12 @@ def generate_novel_views(left_image, right_image, disparity_map, depth_map, intr
 left_image = cv2.imread('example/im_left.jpg', cv2.IMREAD_COLOR)
 intrinsics_matrix = read_intrinsic_matrix('example/K.txt')
 left_depth_map = np.loadtxt('example/depth_left.txt', delimiter=",")
+right_depth_map = np.loadtxt('example/depth_right.txt', delimiter=",")
 baseline = 0.1  # Baseline in meters
-num_views = 11  # Number of desired views
 
 # Generate new views
-novel_views = generate_novel_views(left_image, left_depth_map, intrinsics_matrix, num_views)
+novel_views = generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics_matrix, baseline)
 
 # Save synthesized images
 for i, novel_view in enumerate(novel_views):
-    cv2.imwrite(f'synthesized_image_{i}.jpg', novel_view)
+    cv2.imwrite(f'synth_{i+1}.jpg', novel_view)
