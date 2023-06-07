@@ -79,67 +79,6 @@ def depth(f, b, disp):
                 result[i][j] = 0
     return result
 
-directories = ['set_1', 'set_2', 'set_3', 'set_4', 'set_5']
-
-for directory in directories:
-
-    imgL = cv2.imread(os.path.join(directory, 'im_left.jpg'), cv2.IMREAD_GRAYSCALE)
-    imgR = cv2.imread(os.path.join(directory, 'im_right.jpg'), cv2.IMREAD_GRAYSCALE)
-
-    with open(os.path.join(directory, 'max_disp.txt')) as f:
-        max_disp = int(f.read())
-
-    K = np.loadtxt(os.path.join(directory, 'K.txt'))
-    focal_length = K[0][0]
-
-    base_line = 10
-
-    window_shape = (11,13)
-    filter = (7,7)
-    censusL = census_transform(imgL, window_shape)
-    censusR = census_transform(imgR, window_shape)
-    costVL, costVR = cost_volume(censusL, censusR, max_disp)
-
-    disp_left = proc(costVL, filter)
-    disp_right = proc(costVR, filter)
-
-    dl, dr = left_right_consistency_test(disp_left, disp_right)
-
-    depth_left = depth(focal_length, base_line, dl)
-    depth_right = depth(focal_length, base_line, dr)
-
-    intrinsics_matrix = read_intrinsic_matrix('example/K.txt')
-    baseline = 0.1  # Baseline in meters
-
-    # Generate new views
-    novel_views = generate_novel_views(left_image, depth_left, depth_right, intrinsics_matrix, baseline)
-
-    # Save synthesized images
-    for i, novel_view in enumerate(novel_views):
-        cv2.imwrite(f'synth_{i + 1}.jpg', novel_view)
-
-    #output_dir = os.path.join('results', directory)
-    #os.makedirs(output_dir, exist_ok=True)
-
-    #cv2.imwrite(os.path.join(output_dir,'disp_l.jpg'), dl/ np.max(dl)*255)
-    #cv2.imwrite(os.path.join(output_dir,'disp_r.jpg'), dr/ np.max(dr)*255)
-
-    #cv2.imwrite(os.path.join(output_dir,'depth_l.jpg'),  depth_left/ np.max(depth_left)*255)
-    #cv2.imwrite(os.path.join(output_dir,'depth_r.jpg'), depth_right/ np.max(depth_right)*255)
-
-
-
-def read_intrinsic_matrix(file_path):
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
-
-    intrinsic_matrix = np.zeros((3, 3))
-    for i in range(3):
-        values = lines[i].split()
-        intrinsic_matrix[i] = [float(value) for value in values]
-
-    return intrinsic_matrix
-
 def generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics_matrix, baseline,
                          num_views=11):
     height, width = left_image.shape[:2]
@@ -198,4 +137,56 @@ def generate_novel_views(left_image, left_depth_map, right_depth_map, intrinsics
         novel_views.append(novel_view)
 
     return novel_views
+
+
+directories = ['set_1', 'set_2', 'set_3', 'set_4', 'set_5']
+
+for directory in directories:
+
+    imgL = cv2.imread(os.path.join(directory, 'im_left.jpg'), cv2.IMREAD_GRAYSCALE)
+    imgR = cv2.imread(os.path.join(directory, 'im_right.jpg'), cv2.IMREAD_GRAYSCALE)
+
+    with open(os.path.join(directory, 'max_disp.txt')) as f:
+        max_disp = int(f.read())
+
+    K = np.loadtxt(os.path.join(directory, 'K.txt'))
+    focal_length = K[0][0]
+
+    base_line = 10
+
+    window_shape = (11,13)
+    filter = (7,7)
+    censusL = census_transform(imgL, window_shape)
+    censusR = census_transform(imgR, window_shape)
+    costVL, costVR = cost_volume(censusL, censusR, max_disp)
+
+    disp_left = proc(costVL, filter)
+    disp_right = proc(costVR, filter)
+
+    dl, dr = left_right_consistency_test(disp_left, disp_right)
+
+    depth_left = depth(focal_length, base_line, dl)
+    depth_right = depth(focal_length, base_line, dr)
+
+    intrinsics_matrix = read_intrinsic_matrix('example/K.txt')
+    baseline = 0.1  # Baseline in meters
+
+    # Generate new views
+    novel_views = generate_novel_views(left_image, depth_left, depth_right, intrinsics_matrix, baseline)
+
+    # Save synthesized images
+    for i, novel_view in enumerate(novel_views):
+        cv2.imwrite(f'synth_{i + 1}.jpg', novel_view)
+
+    #output_dir = os.path.join('results', directory)
+    #os.makedirs(output_dir, exist_ok=True)
+
+    #cv2.imwrite(os.path.join(output_dir,'disp_l.jpg'), dl/ np.max(dl)*255)
+    #cv2.imwrite(os.path.join(output_dir,'disp_r.jpg'), dr/ np.max(dr)*255)
+
+    #cv2.imwrite(os.path.join(output_dir,'depth_l.jpg'),  depth_left/ np.max(depth_left)*255)
+    #cv2.imwrite(os.path.join(output_dir,'depth_r.jpg'), depth_right/ np.max(depth_right)*255)
+
+
+
 
