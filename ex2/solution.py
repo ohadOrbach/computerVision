@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from scipy.ndimage import uniform_filter
 from tqdm import tqdm
+import os
 
 
 def census_transform(img, window_size=(7, 9)):
@@ -78,35 +79,40 @@ def depth(f, b, disp):
                 result[i][j] = 0
     return result
 
+directories = ['set_1', 'set_2', 'set_3', 'set_4', 'set_5']
 
-imgL = cv2.imread('example/im_left.jpg', cv2.IMREAD_GRAYSCALE)
-imgR = cv2.imread('example/im_right.jpg', cv2.IMREAD_GRAYSCALE)
+for directory in directories:
 
-with open('example/max_disp.txt') as f:
-    max_disp = int(f.read())
+    imgL = cv2.imread(os.path.join(directory, 'im_left.jpg'), cv2.IMREAD_GRAYSCALE)
+    imgR = cv2.imread(os.path.join(directory, 'im_right.jpg'), cv2.IMREAD_GRAYSCALE)
 
-K = np.loadtxt('example/K.txt')
-focal_length = K[0][0]
+    with open(os.path.join(directory, 'max_disp.txt')) as f:
+        max_disp = int(f.read())
 
-base_line = 10
+    K = np.loadtxt(os.path.join(directory, 'K.txt'))
+    focal_length = K[0][0]
 
-window_shape = (11,13)
-filter = (7,7)
-censusL = census_transform(imgL, window_shape)
-censusR = census_transform(imgR, window_shape)
-costVL, costVR = cost_volume(censusL, censusR, max_disp)
+    base_line = 10
 
+    window_shape = (11,13)
+    filter = (7,7)
+    censusL = census_transform(imgL, window_shape)
+    censusR = census_transform(imgR, window_shape)
+    costVL, costVR = cost_volume(censusL, censusR, max_disp)
 
-disp_left = proc(costVL, filter)
-disp_right = proc(costVR, filter)
+    disp_left = proc(costVL, filter)
+    disp_right = proc(costVR, filter)
 
-dl, dr = left_right_consistency_test(disp_left, disp_right)
+    dl, dr = left_right_consistency_test(disp_left, disp_right)
 
-depth_left = depth(focal_length, base_line, dl)
-depth_right = depth(focal_length, base_line, dr)
+    depth_left = depth(focal_length, base_line, dl)
+    depth_right = depth(focal_length, base_line, dr)
 
-cv2.imwrite(f'disp_l.jpg', dl/ np.max(dl)*255)
-cv2.imwrite(f'disp_r.jpg', dr/ np.max(dr)*255)
+    #output_dir = os.path.join('results', directory)
+    #os.makedirs(output_dir, exist_ok=True)
 
-cv2.imwrite(f'depth_l.jpg',  depth_left/ np.max(depth_left)*255)
-cv2.imwrite(f'depth_r.jpg', depth_right/ np.max(depth_right)*255)
+    #cv2.imwrite(os.path.join(output_dir,'disp_l.jpg'), dl/ np.max(dl)*255)
+    #cv2.imwrite(os.path.join(output_dir,'disp_r.jpg'), dr/ np.max(dr)*255)
+
+    #cv2.imwrite(os.path.join(output_dir,'depth_l.jpg'),  depth_left/ np.max(depth_left)*255)
+    #cv2.imwrite(os.path.join(output_dir,'depth_r.jpg'), depth_right/ np.max(depth_right)*255)
