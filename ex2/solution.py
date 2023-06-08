@@ -131,7 +131,7 @@ def generate_novel_views(left_image, left_depth_map, intrinsics_matrix, baseline
         yield novel_view
 
 
-directories = ['set_2', 'set_3', 'set_4', 'set_5']
+directories = ['set_1' ,'set_2', 'set_3', 'set_4', 'set_5']
 
 for directory in directories:
 
